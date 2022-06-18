@@ -2,7 +2,9 @@
 
 This work has been done as second homework for Bayesian Statistics course. 
 
-It's divided in two parts:
+Attached there are the pdf of the analysis (written in R Markdown), the dataset, the function used in the R's jags function and the .Rmd file.
+
+The analysis is divided in two parts:
 
 ## Bayesian analysis of the dugongs age/length
 
