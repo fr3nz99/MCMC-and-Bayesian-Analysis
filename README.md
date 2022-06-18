@@ -2,7 +2,7 @@
 
 This work has been done as second homework for Bayesian Statistics course. 
 
-Attached there are the pdf of the analysis (written in R Markdown), the dataset, the function used in the R's jags function and the .Rmd file.
+Attached there are the pdf of the analysis (written in R Markdown), the dataset, the function used in the R's jags function, the .Rmd file and the mentioned paper (Carlin and Gelfand - 1991).
 
 The analysis is divided in two parts:
 
