@@ -1,6 +1,7 @@
 # MCMC-and-Bayesian-Analysis
 
-This work has been done as second homework for Bayesian Statistics course. It's divided in two parts:
+This work has been done as second homework for Bayesian Statistics course. 
+It's divided in two parts:
 
 ## Bayesian analysis of the dugongs age/length
 
