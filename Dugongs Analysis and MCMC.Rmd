@@ -1,0 +1,800 @@
+---
+title: "Homework #02"
+subtitle: "Statistical Methods in Data Science II & Lab"
+author: ""
+date: "**June 2022**"
+output:
+  html_document:
+    keep_md: yes
+    theme: united
+  pdf_document:
+    keep_tex: yes
+    toc: no
+header-includes: 
+              - \usepackage[english]{babel}
+              - \usepackage{amsmath}
+              - \usepackage{enumerate}
+              - \usepackage{setspace}
+              - \usepackage{docmute}
+              - \usepackage{fancyhdr}
+              - \usepackage{graphicx}
+              - \usepackage{rotating}
+              - \usepackage{ucs}
+              - \pagestyle{fancy}
+              - \fancyhf{}
+              - \rhead{Test \#01}
+              - \cfoot{\thepage}
+---
+
+
+```{r setup, include=FALSE}
+library(knitr)
+library(ggplot2)
+library(expm)
+library(invgamma)
+library(R2jags)
+library(LaplacesDemon)
+library(corrplot)
+
+set.seed(123)
+knitr::opts_chunk$set(echo = TRUE)
+
+# the default output hook
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  if (!is.null(n <- options$out.lines)) {
+    x = unlist(stringr::str_split(x, '\n'))
+    if (length(x) > n) {
+      # truncate the output
+      x = c(head(x, n), '....\n')
+    }
+    x = paste(x, collapse = '\n') # paste first n lines together
+  }
+  hook_output(x, options)
+})
+```
+
+```{r, include=FALSE, include=FALSE, warning=FALSE}
+opts_chunk$set(out.lines = 23)
+```
+
+
+```{r,echo=FALSE}
+dugongs = read.delim2("./dugong-data.txt", header = TRUE, sep = "", dec = ",", stringsAsFactors = FALSE)
+dugongs = dugongs[, -c(1)]
+dugongs$Length = as.double(dugongs$Length)
+dugongs$Age = as.double(dugongs$Age)
+```
+
+
+
+## Pinto Francesco - 1871045 
+
+\vspace*{0cm}
+
+
+
+\vspace*{1cm}
+
+
+
+
+
+### 1.a Dataset exploration
+
+Let's illustrate the characteristics of the statistical model for dealing with the *Dugong*'s data. Lengths ($Y_i$)  and  ages ($x_i$) of  27 dugongs ([sea cows](https://en.wikipedia.org/wiki/Dugong)) captured off the coast of Queensland have been recorded and the following (non linear)  regression model is considered in [Carlin and Gelfand (1991)](http://people.ee.duke.edu/~lcarin/Gelfand91.pdf):
+\begin{eqnarray*}
+Y_i &\sim& N(\mu_i, \tau^2) \\
+\mu_i=f(x_i)&=& \alpha - \beta \gamma^{x_i}\\
+\end{eqnarray*}
+Model parameters are
+$\alpha \in (1, \infty)$,
+$\beta \in (1, \infty)$,
+$\gamma \in (0,1)$,
+$\tau^2 \in (0,\infty)$. 
+Let us consider the following prior distributions:
+\begin{eqnarray*}
+\alpha &\sim&  N(0,\sigma^2_{\alpha})\\
+\beta  &\sim&  N(0,\sigma^2_{\beta}) \\
+\gamma &\sim&  Unif(0,1)\\
+\tau^2 &\sim&  IG(a,b)) (Inverse Gamma)
+\end{eqnarray*}
+
+
+First of all let's analyze our sample by evaluating the sample mean and the sample variance:
+
+```{r}
+mu_i_hat = mean(dugongs$Length)
+mu_i_hat
+
+tau_2_hat = var(dugongs$Length)
+tau_2_hat
+```
+
+And now we observe the frequency distribution of the observed outcome variables $Y$.
+
+```{r, echo= F}
+ggplot(dugongs, aes(x=Length)) + geom_histogram( fill=I("blue"), col=I("red"), alpha=I(.2), 
+      breaks = seq(1.6, 2.8, 0.2)) + labs(title= 'Length of the Dugongs - Frequencies', x='Length', y='Count') 
+```
+
+We already know that the lengths have normal distribution, in fact we can observe a simil-normal distribution. Of course the "normality" is not evident because the sample is very small.
+
+
+Instead, the age of the dugongs have the following distribution:
+
+
+
+
+```{r, echo = F}
+ggplot(dugongs, aes(x=Age)) + geom_histogram( fill=I("darkgreen"), col=I("orange"), alpha=I(.2), 
+      breaks = seq(0, 35, 5)) + labs(title= 'Age of the Dugongs - Frequencies', x='Age', y='Count') 
+```
+
+We can see that the distribution is descent, because the longer is the life, the smaller is the probability to be still alive! 
+
+
+And now the distribution of the length and age together:
+
+```{r, echo = F}
+ggplot(dugongs, aes(x=Age, y=Length)) + geom_point(col = 'magenta3') + labs( x='Age', y='Length')
+```
+
+At first glance it seems that the length and the age move together: we can study this phenomena by evaluating the correlation.
+
+```{r}
+cor = cor(dugongs$Length, dugongs$Age)
+```
+
+```{r, echo = F}
+cat(paste("The correlation between x and Y is ", round(cor,4)*100, "%", sep =""))
+```
+
+
+The data don't follow a linear path, so we can suppose that the statistical model is defined by a polynomial regression.
+
+
+
+### 1.b Derivation of the corresponding likelihood function
+
+Given that our random variables $Y_i$ (the lengths) are independent, the general formula of the likelihood for our five parameters ($x_i, \alpha, \beta, \gamma, \tau^{2}$) is 
+
+$$\mathcal{L}(x_i, \alpha, \beta, \gamma, \tau^{2}|y_i) = \prod_{i=1}^{n} f(y_i|x_i, \alpha, \beta, \gamma, \tau^{2})$$
+That can be adapted to our distribution ($N(\mu_i, \tau^2)$) in the following way
+
+
+$$\prod_{i=1}^{n} \frac{1}{\sqrt{2\pi\tau^{2}}} \cdot exp\Big\{-\frac{1}{2\tau^{2}} ( y_{i} - \mu_{i})^{2} \Big\}
+= (2\pi\tau^{2})^{-\frac{n}{2}} \cdot exp\Big\{ -\frac{1}{2\tau^{2}} \sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} \Big\}$$
+
+
+
+### 1.c Expression of the joint prior distribution of the parameters
+
+Due to the fact that we are assuming independence between the parameters ($\alpha, \beta, \gamma, \tau^{2}$), the joint prior distribution will be the product of the respective priors.
+
+$$\pi(\alpha, \beta, \gamma, \tau^{2}) =  f_{N(0,\sigma_\alpha^2)}(\alpha) \cdot f_{N(0,\sigma_\beta^2)}(\beta) \cdot f_{Unif(0, 1)}(\gamma) \cdot f_{IG(a, b)}(\tau^{2})$$
+Before going on, let's quickly recap the respective distributions and try to exploit only the important information for the analysis (the information related to the hyperparameters):
+
+$f_{N(0,\sigma_\alpha^2)}(\alpha) = \frac{1}{\sigma_\alpha\sqrt{2\pi}}\ exp\{\frac{-\alpha^2}{2\sigma_\alpha^2} \} \propto exp\{\frac{-\alpha^2}{2\sigma_\alpha^2} \}$ for $\alpha>1$
+
+$f_{N(0,\sigma_\beta^2)}(\beta) = \frac{1}{\sigma_\beta\sqrt{2\pi}}\ exp\{\frac{-\beta^2}{2\sigma_\beta^2} \} \propto exp\{\frac{-\beta^2}{2\sigma_\beta^2} \}$ for $\beta>1$
+
+$f_{Unif(0, 1)}(\gamma) = \frac{1}{1-0} = 1$ for $\gamma \in (0,1)$
+
+$f_{IG(a, b)}(\tau^{2}) = \frac{b^a}{\Gamma(a)} \tau^{2^{(-a-1)}} e^{-\frac{b}{\tau^2}} \propto \tau^{2(-a-1)} exp\Big\{\frac{-b}{\tau^2}\Big\}$ for $\tau^2>0$
+
+Then the final joint prior distribution can be written as 
+
+$$\pi(\alpha, \beta, \gamma, \tau^{2}) = exp\Big\{\frac{-\alpha^2}{2\sigma_\alpha^2}\Big\} \cdot exp\Big\{\frac{-\beta^2}{2\sigma_\beta^2} \Big\} \cdot \tau^{2^{(-a-1)}} exp \Big\{ \frac{-b}{\tau^2} \Big\} \mathbb{I}_{\alpha}(1,\infty) \mathbb{I}_{\beta}(1,\infty) \mathbb{I}_{\tau^2}(1,\infty) \mathbb{I}_{\gamma}(0,1) = \\
+ = \tau^{2^{(-a-1)}} exp \Big\{-\Big(\frac{\alpha^2}{2\sigma_\alpha^2} + \frac{\beta^2}{2\sigma_\beta^2} + \frac{b}{\tau^2} \Big) \Big\}\mathbb{I}_{\alpha}(1,\infty) \mathbb{I}_{\beta}(1,\infty) \mathbb{I}_{\tau^2}(0,\infty) \mathbb{I}_{\gamma}(0,1)$$
+
+
+
+### 1.c' Suitable choice for the hyperparameters of $Y_i$
+
+Now it's time to choose the best hyperparameters for $Y_i  \sim N(\mu_i, \tau^2)$
+
+#### -Choice of $\mu_i$
+
+In order to choose the best value of $\mu_i = \alpha - \beta \gamma^{x_i}$ we need to tune the best initial values for $\alpha$, $\beta$ and $\gamma$. These values will be modeled with the MCMC and with the jags functions.
+
+The first step for determine an initial distribution for $\alpha$. Due to the fact that I start selecting $\alpha = 1.1$, I want a normal distribution that gives a good probability to this value:
+
+
+```{r, echo = F}
+curve(dnorm(x, 0, 5), col = 'orchid', xlim = c(-20,20), lwd = 3, ylim = c(0, 0.085), ylab = expression(pi(alpha)), xlab = expression(alpha))
+
+for(i in seq(5,11,3))
+  curve(dnorm(x, 0, i), col = 'grey', add = T)
+abline(v = 1.1, lty = 2, col = 'orange')
+
+legend(9, 0.08, legend=c("Best prediction", "Other predictions"), col=c("orchid", "grey"), lty=1, cex=0.8)
+grid()
+```
+
+My initial choice for $\sigma_\alpha^2$ is $5$, so $\alpha \sim N(0,5)$
+
+Then I evaluate $\sigma_\beta^2$ such as it gives a good plausibility to my initial choice $\beta = 1.1$. Also in this case I choose the same distribution as before, $\beta \sim N(0,5)$
+
+```{r, echo = F}
+curve(dnorm(x, 0, 5), col = 'darkblue', xlim = c(-20,20), lwd = 3, ylim = c(0, 0.085), ylab = expression(pi(beta)), xlab = expression(beta))
+
+for(i in seq(5,11,3))
+  curve(dnorm(x, 0, i), col = 'grey', add = T)
+abline(v = 1.1, lty = 2, col = 'orange')
+
+legend(9, 0.08, legend=c("Best prediction", "Other predictions"), col=c("darkblue", "grey"), lty=1, cex=0.8)
+grid()
+```
+
+
+
+Regarding the parameter $\gamma$ I don't need to find its hyperparameters, because its distribution is already known: $\gamma \sim Unif(0,1)$
+
+#### -Choice of $\tau^2$
+
+To choose the best $\tau^2$ for our model, I decided to study the uncertainty by looking at the variances for different values of $a \in (2,10]$ and $b \in [1,10]$. I did a matrix that contains the variances for every couple of $a$ and $b$ and then extracted the best parameters (those with smallest variance). 
+
+[**Reminder**] the variance of an Inverse Gamma is  
+
+$$\sigma_{IG}^2= \frac{b^2}{(a-1)^2(a-2)}$$
+
+```{r}
+#values for a
+a = seq(2.001,10,0.1)
+
+#values for b
+b = seq(1,10,0.1)
+
+#creation of the matrix
+x = matrix(data = NA, nrow = length(a), ncol = length(b))
+
+#function of the variance
+var = function(a,b) b^2/((a-1)^2 * (a-2))
+
+#matrix with the variances for all the possible values a and b
+for(i in 1:length(a)){
+  for(j in 1:length(b)){
+    x[i,j] = var(a[i], b[j])
+  }
+}
+
+#hyperparameters for the smallest variance
+#which command finds the required values for row and column (in  this case the min)
+a_min = a[which(x==min(x), arr.ind=T)[1]] 
+b_min = b[which(x==min(x), arr.ind=T)[2]]
+```
+
+```{r, echo = F}
+cat(paste("The best hyperparameters for ", 'τ^2 ',
+          'are a=', a_min, " and b=", b_min, sep =""))
+```
+
+
+```{r, echo = F}
+curve(dinvgamma(x, a_min, b_min), xlim = c(0,0.3), ylim = c(0,13), col = 'orchid',
+      xlab = 'x', ylab = expression(pi(tau^2)), main = expression(paste("PDF of ", tau^2, " as InvGamma(9.901, 1)")), lwd = 3)
+
+legend(0.21, 12, legend=c("Best prediction", "Other predictions"), col=c("orchid", "grey"), lty=1, cex=0.8)
+
+grid()
+
+for(a in c(3,6, 10)){
+  for(b in c(1.5, 2)){
+    curve(dinvgamma(x, a, b), col = 'grey', add = T)
+  }
+}
+```
+
+
+
+
+
+### 1.d Derivation of the functional form  (up to proportionality constants) of all *full-conditionals*
+
+The first full conditionals regard the distribution of $\mu_i$, so I start analyzing the parameters $\alpha$, $\beta$ and $\gamma$:
+
+**-1 full conditional: $\alpha$**
+
+$$
+\pi(\alpha|\beta,\gamma,\mu_i,\tau^2,y_0) \propto \pi(\mu_i|\alpha, \beta, \gamma)\pi(\alpha) 
+\propto\\ \propto (2\pi\tau^{2})^{-\frac{n}{2}}  exp\Big\{ -\frac{1}{2\tau^{2}} \sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} \Big\} exp\{\frac{-\alpha^2}{2\sigma_\alpha^2} \} \\
+ \propto  \tau^{2 (-\frac{n}{2})} exp\Big\{ -\frac{1}{2\tau^{2}} \Big [\sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2}  - \frac{\alpha^2}{\sigma_{\alpha}^2}\Big ] \Big\}
+$$
+
+for $\alpha>1$
+
+**-2 full conditional: $\beta$**
+
+$$
+\pi(\beta|\alpha,\gamma,\mu_i,\tau^2,y_0) \propto \pi(\mu_i|\alpha, \beta, \gamma)\pi(\beta) 
+ \propto\\ \propto (2\pi\tau^{2})^{-\frac{n}{2}}  exp\Big\{ -\frac{1}{2\tau^{2}} \sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} \Big\} exp\{\frac{-\beta^2}{2\sigma_\beta^2} \} \propto \\
+ \propto  \tau^{2 (-\frac{n}{2})} exp\Big\{ -\frac{1}{2\tau^{2}} \Big [\sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2}  - \frac{\beta^2}{\sigma_{\beta}^2}\Big ] \Big\}
+ \\
+$$
+
+for $\beta>1$
+
+**-3 full conditional: $\gamma$**
+
+$$
+\pi(\gamma|\alpha,\beta,\mu_i,\tau^2,y_0) \propto \pi(\mu_i|\alpha, \beta, \gamma)\pi(\gamma)
+\\ 
+\propto exp\Big\{ -\frac{1}{2\tau^{2}} \sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} \Big\} \mathbb{I}_{\gamma}(0,1)
+$$
+
+
+And then I evaluate the full conditional for $\tau^2$:
+
+
+$$
+\pi(\tau^2|\alpha,\beta,\mu_i,y_0) \propto \pi(y_0|\alpha, \beta, \gamma, \tau^2)\pi(\tau^2)\propto \pi(y_0|\mu_i, \tau^2) \pi(\tau^2) \propto\\
+\propto (2\pi\tau^{2})^{-\frac{n}{2}}  exp\Big\{ -\frac{1}{2\tau^{2}} \sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} \Big\}\tau^{2(-a-1)} exp\Big\{\frac{-b}{\tau^2}\Big\}\\
+\propto\tau^{2(-\frac{n}{2}-a-1)}exp\Big\{ -\frac{1}{2\tau^{2}} \sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} -\frac{b}{\tau^2} \Big\} = \\
+\tau^{2(-\frac{n}{2}-a-1)}exp\Big\{ -\frac{1}{2\tau^{2}} \Big [\sum_{i=1}^{n}\Big( y_{i} - (\alpha - \beta\gamma^{x_{i}})\Big)^{2} -2b \Big ] \Big\}
+$$
+
+for $\tau^2>0$
+
+
+
+### 1.e The respective distributions
+
+I can recognize the following distributions from the formulas above:
+
+$$
+\alpha \sim N\Bigg (\mu = \frac{\sum_{i=1}^n (y_i + \beta\gamma^{x_i})}{\tau^2\Big(\frac{1}{\sigma_{\alpha}^2}+\frac{n}{\tau^2}\Big)}, \sigma^2 = \frac{1}{\frac{1}{\sigma_\alpha^2}+\frac{n}{\tau^2}}  \Bigg )
+$$
+$$
+\beta \sim N\Bigg (\mu = \frac{\sum_{i=1}^n (y_i\gamma^{x_i} + \alpha\gamma^{x_i})}{\tau^2\Big(\frac{1}{\sigma_{\alpha}^2}+\frac{\sum_{i=1}^n\gamma^{2x_i}}{\tau^2}\Big)}, \sigma^2 = \frac{1}{\frac{1}{\sigma_\alpha^2}+\frac{\sum_{i=1}^n\gamma^{2x_i}}{\tau^2}}  \Bigg )
+$$
+
+$$
+\tau^2 \sim IG \Big (a = a+\frac{n}{2}+1, b = \frac{1}{2}\sum_{i=1}^n(y_i - \alpha + \beta\gamma^{x_i})^2 + b \Big )
+$$
+
+### 1.f Markov Chain simulation with Metropolis-within-Gibbs algorithm
+
+Doing a MC simulation manually (from scratch) with Metropolis-within-Gibbs algorithm would be so long and time-consuming. Luckily there is the jags package that does all the passage automatically for us! So I'm gonna do the simulation as follows.
+
+```{r, echo = F}
+mydata <- list(   x = c( 1.0,  1.5,  1.5,  1.5, 2.5,   4.0,  5.0,  5.0,  7.0,
+                      8.0,  8.5,  9.0,  9.5, 9.5,  10.0, 12.0, 12.0, 13.0,
+                      13.0, 14.5, 15.5, 15.5, 16.5, 17.0, 22.5, 29.0, 31.5),
+               Y = c(1.80, 1.85, 1.87, 1.77, 2.02, 2.27, 2.15, 2.26, 2.47,
+                     2.19, 2.26, 2.40, 2.39, 2.41, 2.50, 2.32, 2.32, 2.43,
+                     2.47, 2.56, 2.65, 2.47, 2.64, 2.56, 2.70, 2.72, 2.57), N = 27)
+```
+
+
+```{r}
+t = 10000 #steps
+parameters = c('alpha', 'beta', 'gamma', 'sigma') 
+#due to the fact that invgamma is not supported in the model file for jags, I'm gonna study the parameter sigma=1/sqrt(tau), where tau has gamma distribution (like the real tau^2). 
+#I'm gonna consider 'sigma^2' as tau^2 where sigma is the inverse of a gamma
+
+inits = list(alpha = 1.1, beta = 1.1, tau_2 = 0.5, gamma = 1) #initial parameters mentioned above
+inits = list(inits) #converting them to list in order to become readable for jags
+
+djags = jags(data = mydata, inits = inits, parameters.to.save = parameters, model.file = '2022-jags-model-dugong.txt', n.chains = 1, n.thin = 1, n.burnin = 10, n.iter = t)
+```
+
+
+### 1.g  Trace-plots of the simulations of each parameter
+
+I need the trace-plot for my parameters to make sure that my distribution is well calibrated.
+
+In fact, we can observe that the distribution of the Markov Chain for every parameter is balanced around the mean, that is represented with the dashed line:
+
+```{r, echo = F}
+plot(djags$BUGSoutput$sims.array[, 1, "alpha"],type = 'l', col = 'darkred', main = expression(paste("Trace-plot of the Markov Chain for ", alpha)), xlab ='t', ylab = expression(alpha))
+abline(h = mean(djags$BUGSoutput$sims.array[, 1, "alpha"]), lty = 2, lwd = 3, col = 'orange')
+grid()
+```
+
+
+```{r, echo = F}
+plot(djags$BUGSoutput$sims.array[,1,"beta"],type = 'l', col = 'orange', main = expression(paste("Trace-plot of the Markov Chain for ", beta)), xlab ='t', ylab = expression(beta))#, ylim = c(0.5,1.6))
+abline(h = mean(djags$BUGSoutput$sims.array[, 1, "beta"]), lty = 2, lwd = 3, col = 'orchid')
+grid()
+```
+
+```{r, echo = F}
+plot(djags$BUGSoutput$sims.array[,1,"gamma"],type = 'l', col = 'darkgreen', main = expression(paste("Trace-plot of the Markov Chain for ", gamma)), xlab ='t', ylab = expression(gamma))#, ylim = c(0.6,1.1))
+abline(h = mean(djags$BUGSoutput$sims.array[, 1, "gamma"]), lty = 2, lwd = 3, col = 'orange')
+grid()
+```
+
+
+```{r, echo = F}
+plot(djags$BUGSoutput$sims.array[,1,"sigma"],type = 'l', col = 'orchid', main = expression(paste("Trace-plot of the Markov Chain for ", sigma)), xlab ='t', ylab = expression(sigma))#, ylim = c(0.05,0.23))
+abline(h = mean(djags$BUGSoutput$sims.array[, 1, "sigma"]), lty = 2, lwd = 3, col = 'orange')
+grid()
+```
+
+
+### 1.h  Graphical evaluation of the empirical averages $\hat{I}_t$  with growing $t=1,...,T$
+
+If $I<\infty$ and $\theta_1,...\theta_t$ iid, for the Strong Law of Large Numbers (SLLN), the empirical average is a consistent (sequence of) estimator(s) of $I$, such as 
+$$
+\hat{I}_{t} = \frac{1}{T} \sum_{i=1}^{T} h(\theta_i)\xrightarrow{\text{a.s.}} I
+$$
+So now I implement the estimator in the following way and apply it to every parameter.
+
+```{r}
+n = length(djags$BUGSoutput$sims.array[,,1])
+sum = 0
+I_t = rep(NA, n)
+
+#this is the singular case of alpha ([i,,1] represent the alpha index)
+for(i in 1:n){
+  sum = sum + djags$BUGSoutput$sims.array[i,,1] 
+  I_t[i] = sum/i
+}
+```
+
+
+
+```{r, echo = F}
+plot(I_t, type = 'l', col = 'orange', xlab = 't', ylab = expression(alpha), main = expression(paste('Empirical Average over t iterations for ', alpha) ))
+grid()
+
+sum = 0
+I_t = rep(NA, n)
+
+for(i in 1:n){
+  sum = sum + djags$BUGSoutput$sims.array[i,,2]
+  I_t[i] = sum/i
+}
+plot(I_t, type = 'l', col = 'orchid', xlab = 't', ylab = expression(beta), main = expression(paste('Empirical Average over t iterations for ', beta) ))
+grid()
+
+sum = 0
+I_t = rep(NA, n)
+
+for(i in 1:n){
+  sum = sum + djags$BUGSoutput$sims.array[i,,4]
+  I_t[i] = sum/i
+}
+plot(I_t, type = 'l', col = 'green', xlab = 't', ylab = expression(gamma), main = expression(paste('Empirical Average over t iterations for ', gamma) ))
+grid()
+
+sum = 0
+I_t = rep(NA, n)
+
+for(i in 1:n){
+  sum = sum + djags$BUGSoutput$sims.array[i,,5]
+  I_t[i] = sum/i
+}
+plot(I_t, type = 'l', col = 'red', xlab = 't', ylab = expression(sigma), main = expression(paste('Empirical Average over t iterations for ', sigma) ))
+grid()
+```
+
+
+### 1.i Provide estimates for each parameter together with the approximation error and explain how you have evaluated such error
+
+I can simply extract the estimates for each parameter by looking into the table generated by the jags function as follows:
+
+The estimate average of $\alpha$ is 
+```{r}
+as.double(djags$BUGSoutput$mean['alpha'])
+```
+
+for $\beta$ is
+```{r}
+as.double(djags$BUGSoutput$mean['beta'])
+```
+
+
+for $\gamma$ is
+```{r}
+as.double(djags$BUGSoutput$mean['gamma'])
+```
+
+and for $\sigma$ is 
+```{r}
+as.double(djags$BUGSoutput$mean['sigma'])
+```
+
+To evaluate the approximation error I use the **MCSE** estimate: the MCSE (Monte Carlo Standard Error) is an estimate of the inaccuracy of Monte Carlo samples, usually regarding the expectation of posterior samples from  Monte Carlo Markov Chain algorithms.
+
+I estimate the MCSE with the $MCSE$ function from LaplacesDemon package
+
+```{r}
+#AE = Approximation Rrror
+AE_alpha = MCSE(djags$BUGSoutput$sims.array[,1,"alpha"])
+AE_beta = MCSE(djags$BUGSoutput$sims.array[,1,"beta"])
+AE_gamma = MCSE(djags$BUGSoutput$sims.array[,1,"gamma"])
+AE_sigma = MCSE(djags$BUGSoutput$sims.array[,1,"sigma"])
+```
+
+
+```{r, echo = F}
+
+cat('The approximation error for alpha is ', AE_alpha, '\n',
+    'The approximation error for beta is ', AE_beta, '\n',
+    'The approximation error for gamma is ', AE_gamma, '\n',
+    'The approximation error for sigma is ', AE_sigma)
+```
+
+### 1.l  Which parameter has the largest posterior uncertainty? How did you measure it?
+
+To measure the posterior uncertainty, a good indicator could be the standard deviation. 
+
+The uncertainty is sometimes contained into the variability of the data that distorts a good prediction for the parameters.
+
+```{r}
+sd_alpha = djags$BUGSoutput$sd$alpha
+sd_beta = djags$BUGSoutput$sd$beta
+sd_gamma = djags$BUGSoutput$sd$gamma
+sd_sigma = djags$BUGSoutput$sd$sigma
+```
+
+```{r, echo = F}
+cat('The posterior uncertainty alpha is ', sd_alpha, '\n',
+    'The posterior uncertainty for beta is ', sd_beta, '\n',
+    'The posterior uncertainty for gamma is ', sd_gamma, '\n',
+    'The posterior uncertainty for sigma is ', sd_sigma)
+```
+
+At a first glance, it seems to be $\alpha$ the parameter with highest posterior uncertainty!
+
+### 1.m  Parameters with the largest correlation 
+
+To discover the parameters with highest correlation, I simply evaluate a correlation plot between them:
+
+We can clearly see that all the parameters have correlation (positive or negative), but the highest is the one between $\alpha$ and $\gamma$ and it's a positive correlation.
+
+```{r, echo = F}
+corrplot(cor(djags$BUGSoutput$sims.matrix)[-3,-3], method = "color", addCoef.col="black", col = COL2('RdYlBu'))
+```
+
+
+
+### 1.n  Posterior predictive  distribution of the length of a dugong with age of 20 years.
+
+Before the data are considered, the distribution of the unknown $Y$ is 
+
+$$m(y) = \int_{\Theta}f(y|\theta)d\theta$$
+
+
+It's the marginal distribution of $y$ and it's called *prior predictive distribution*. With this distribution we can only try to do predictions with the information given by the single parameter.
+
+After observing the data $Y=(Y_1,...,Y_n) = y = (y_1,...,y_n)$, the **posterior predictive distribution** is given by 
+$$m(y_{new}|y_1,...,y_n) = \int_\Theta f(y_{new}|\theta)\pi(\theta|\textbf{y})$$
+It is the distribution of possible unobserved values conditional on the observed values.
+
+In the MCMC case this formula can be avoided and, also in this case, I can rely on the jags function
+
+```{r, results='hide', warning = F}
+pred_20 <- jags(data=mydata, inits=inits, parameters.to.save = c('Ypred20'), model.file = 'Model_with_predictions.txt', n.chains=1,n.iter=10000,n.thin = 1,n.burnin = 1)
+#Ypred20 stands for the prediction of Y for x = 20
+```
+
+```{r, echo = F}
+cat('The posterior predictive distribution for a dugong with age of 20 years suggests us that his length will be', round(as.double((pred_20$BUGSoutput$mean$Ypred20)), 2), 'meters.')
+```
+
+
+### 1.o  Prediction of a different dugong with age 30 
+
+Using the same method as before,
+
+```{r, results='hide', warning = F}
+pred_30 <- jags(data=mydata, inits=inits, parameters.to.save = c('Ypred30'), model.file = 'Model_with_predictions.txt', n.chains=1,n.iter=10000,n.thin = 1,n.burnin = 1)
+#Ypred30 stands for the prediction of Y for x = 30
+```
+
+```{r, echo = F}
+cat('The posterior predictive distribution for a dugong with age of 30 years suggests us that his length will be', round(as.double((pred_30$BUGSoutput$mean$Ypred30)), 2), 'meters.')
+```
+
+### 1.p The less precise prediction
+
+What's the less reliable between the last two predictions? We have two ways to evaluate this factor: the standard deviation and the width of the Equal-Tail interval.
+
+**Standard Deviaton:** I consider less reliable the prediction with higher standard deviation:
+
+```{r}
+sd_20 = as.double(pred_20$BUGSoutput$sd[1])
+sd_30 = as.double(pred_30$BUGSoutput$sd[1])
+```
+
+```{r, echo = F}
+if(sd_20>sd_30)
+  cat('The standard deviation of the first prediction is higher, (',sd_20 ,'), so the second prediction is better (with sd=',sd_30 ,')')
+if(sd_30>sd_20)
+  cat('The standard deviation of the second prediction is higher, (',sd_30 ,'), so the first prediction is better (with sd=',sd_20 ,')')
+```
+
+
+**ET-Interval:** The longest is the interval, the less reliable is the prediction, because the data are more distributed and so the probabilities are not much high on a specific point. In this case my interval is at level $\alpha = 0.05$:
+
+```{r}
+length_20 = pred_20$BUGSoutput$summary[1,'97.5%'] - pred_20$BUGSoutput$summary[1,'2.5%']
+length_30 = pred_30$BUGSoutput$summary[1,'97.5%'] - pred_30$BUGSoutput$summary[1,'2.5%']
+```
+
+```{r, echo = F}
+if(length_20>length_30)
+  cat('The ET-interval range of the first prediction is higher, (',length_20 ,'), so the second prediction is better (with ET range of',length_30 ,')')
+if(length_30>length_20)
+  cat('The ET-interval range of the second prediction is higher, (',length_30 ,'), so the first prediction is better (with ET range of',length_20 ,')')
+```
+
+In both case we prefer the first prediction (on 20 y.o. dugongs), so we consider it as the best one!
+
+\newpage
+
+# Part 2 - Markov Chain
+
+Let us consider a Markov Chain 
+$(X_t)_{t \geq 0}$
+defined on the state space ${\cal S}=\{1,2,3\}$
+with the following transition matrix
+
+
+\begin{pmatrix}
+0 & 1/2 & 1/2\\
+5/8 & 1/8 & 1/4\\
+2/3 & 1/3 & 0
+\end{pmatrix}
+
+
+### 2.a Markov Chain after 1000 steps
+
+My goal is to find the distribution of the Markov Chain starting at time $t=0$ in the state  $X_0=1$ for $t=1000$ consecutive times.
+
+
+**Step 1:** implementation of the transition matrix in R
+```{r}
+#Implementation of the transition matrix:
+P = matrix(data = c(0, 5/8, 2/3, 1/2, 1/8, 1/3, 1/2, 1/4, 0), 
+             nrow=3, ncol=3)
+
+#Rounded matrix (some values are periodical numbers, so we round them in the visualization of the matrix):
+print(round(P,2)) 
+```
+
+**Step 2:** evaluation of the MC after 1000 steps.
+
+```{r}
+S=c(1, 2, 3) #states
+
+x0 = 1 
+n = 1000
+chain = rep(NA, n+1) #implementation of the chain matrixx
+
+chain[1] = x0 #first step          
+
+t = 0
+for(t in 1:n){
+  chain[t+1] = sample(x = S, size = 1, prob = P[chain[t],])
+}
+```
+
+### 2.b Empirical Relative Frequency
+
+The empirical relative frequencies of the states in my simulation are the following:
+
+```{r}
+prop.table(table(chain))
+```
+
+
+### 2.c Simulation pt. 2
+
+I repeat the simulation for $500$ times and record only the final state at time $t=1000$ for each of the  500 simulated chains, computing the relative frequency of the 500 final states.
+
+
+```{r}
+val = rep(0,500)
+
+for(i in 1:500){
+  t =  0
+  for(t in 1:n){
+    chain[t+1] = sample(x=S, size=1, prob=P[chain[t],])
+  }
+  val[i] = chain[1000]
+}
+
+prop.table(table(val))
+```
+
+
+What distribution are you approximating in this way?  
+Try to formalize the difference between this point and the previous
+point. 
+
+
+### 2.d Stationary distribution
+
+Given $\pi$, probability vector over the state space $S$ (such as $\sum_{i\in S}\pi_i=1$ and $\pi_i \geq 0$ $\forall i \in S$) we consider $\pi$ as the Stationary Distribution of the Markov Chain if 
+
+$$\pi=\pi P$$
+Where $P$ is the transition matrix
+
+so, in other words, $\pi_j=\sum_{i\in S}\pi_i p_{ij}$ for every $j \in S$
+
+Given that, we can find the stationary distribution in two equivalent ways: by solving the system below, or by multiplying the transition matrix $P$ itself infinite times. Let's do both:
+
+**System resolution**
+
+\begin{cases}
+\pi_1=\frac{5}{8}\pi_2+\frac{2}{3}\pi_3\\
+\pi_2=\frac{1}{2}\pi_1+\frac{1}{8}\pi_2+\frac{1}{3}\pi_3\\
+\pi_3=\frac{1}{2}\pi_1+\frac{1}{4}\pi_2\\
+\pi_1+\pi_2+\pi_3=1
+\end{cases}
+
+The system returns the following (rounded) solutions: $\pi_1=0.392$, $\pi_2=0.330$, $\pi_3 = 0.278$, so $\pi = (0.392, 0.330, 0.278)$.
+
+**Matrix-multiplication resolution**
+
+$$\pi = \lim_{n\rightarrow \infty}P^n$$
+
+I decide to evaluate $\pi$ by elevating the $P$ matrix to an high integer, because the result remains the same (for example if $n$ is $100$, $1000$ or $10000$ the stationary distribution remains the same)
+
+
+```{r}
+P_1000 = P%^%1000 #this function is taken from expn package
+P_1000[1,]
+```
+
+The result is the same. I'm satisfied of my calculations.
+
+### 2.e Well-approximation of the ERF
+
+Is the ERF well approximated by the simulated empirical relative frequencies computed in 1.b and 1.c?
+  
+in the 1.b I computed:
+```{r, echo = F}
+prop.table(table(chain))
+```
+  
+In the point 1.c I computed  
+
+```{r, echo = F}
+prop.table(table(val))
+```
+  
+And then the real ERF is 
+
+```{r, echo = F}
+P_1000[1,]
+```
+
+
+We can conlude that they are very similar!
+
+
+### 2.f What if...?
+
+What happens if we start at $t=0$ from state  $X_0=2$ instead of $X_0=1$?
+
+
+```{r}
+x0 = 2 
+chain = rep(NA, n+1) 
+
+chain[1] = x0 #first step          
+t = 0
+
+for(t in 1:n){
+  chain[t+1] = sample(x = S, size = 1, prob = P[chain[t],])
+}
+```
+
+```{r, echo = F}
+prop.table(table(chain))
+```
+
+
+Of course the distribution has no relevant changes because, on the long period, the MC will have the same behaviour and so the same frequencies.
+
+
+\vspace{6cm}
+
+
+
+

@@ -1,0 +1,26 @@
+#  MODEL SPECIFICATION 
+
+
+model
+	{
+		for( i in 1:N ) {
+			Y[i] ~ dnorm(mu[i], tau)
+			mu[i] <- alpha - beta * pow(gamma,x[i])			
+		}
+
+			Ypred30 ~ dnorm(condexp30, tau)
+			condexp30 <- alpha - beta * pow(gamma,30)	
+			Ypred20 ~ dnorm(condexp20, tau)
+		 	condexp20 <- alpha - beta * pow(gamma,20)
+
+		alpha ~ dnorm(0.0, 1.0E-3)I(1.0,)
+		beta ~ dnorm(0.0, 1.0E-3)I(1.0,)
+		gamma ~ dunif(0.0, 1.0)
+		tau ~ dgamma(0.001, 0.001)
+
+# tau � il parametro di precisione
+
+		sigma <- 1 / sqrt(tau)
+
+		U3 <- logit(gamma)	
+	}
